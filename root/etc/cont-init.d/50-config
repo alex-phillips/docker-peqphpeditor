@@ -1,0 +1,48 @@
+#!/usr/bin/with-contenv bash
+
+# set default values for variables
+declare -A PEQPHPEDITOR_CONF
+
+PEQPHPEDITOR_CONF[DB_HOST]=${DB_HOST:-mariadb}
+PEQPHPEDITOR_CONF[DB_PORT]=${DB_PORT:-3306}
+PEQPHPEDITOR_CONF[DB_NAME]=${DB_NAME:-peq}
+PEQPHPEDITOR_CONF[DB_USER]=${DB_USER:-root}
+PEQPHPEDITOR_CONF[DB_PASSWORD]=${DB_PASSWORD:-}
+PEQPHPEDITOR_CONF[DB_TIMEOUT]=${DB_TIMEOUT:-30}
+
+dbcmd="mysql -h ${PEQPHPEDITOR_CONF[DB_HOST]} -P ${PEQPHPEDITOR_CONF[DB_PORT]} -u "${PEQPHPEDITOR_CONF[DB_USER]}" "-p${PEQPHPEDITOR_CONF[DB_PASSWORD]}""
+echo $dbcmd
+echo "Waiting ${PEQPHPEDITOR_CONF[DB_TIMEOUT]}s for database to be ready..."
+counter=1
+while ! ${dbcmd} -e "show databases;" > /dev/null 2>&1; do
+    sleep 1
+    counter=$((counter + 1))
+    if [ ${counter} -gt ${PEQPHPEDITOR_CONF[DB_TIMEOUT]} ]; then
+        >&2 echo "ERROR: Failed to connect to database on ${PEQPHPEDITOR_CONF[DB_HOST]}"
+        exit 1
+    fi;
+done
+echo "Database ready!"
+
+cd /app/peqphpeditor
+
+if [ ! -f "/config/config.php" ]; then
+	mv /app/peqphpeditor/config.php.dist /config/config.php
+	${dbcmd} peq < /app/peqphpeditor/sql/schema.sql
+	${dbcmd} peq < /app/peqphpeditor/sql/expansion.sql
+
+	sed -i "s|'DB_HOST', 'localhost'|'DB_HOST', '"${PEQPHPEDITOR_CONF[DB_HOST]}"'|g" /config/config.php
+	sed -i "s|'DB_USER', 'username'|'DB_USER', '"${PEQPHPEDITOR_CONF[DB_USER]}"'|g" /config/config.php
+	sed -i "s|'DB_PASSWORD', 'password'|'DB_PASSWORD', '"${PEQPHPEDITOR_CONF[DB_PASSWORD]}"'|g" /config/config.php
+	sed -i "s|'DB_NAME', 'database_name'|'DB_NAME', '"${PEQPHPEDITOR_CONF[DB_NAME]}"'|g" /config/config.php
+fi
+
+ln -sf /config/config.php /app/peqphpeditor/config.php
+
+# fix open tag ini entry
+echo "short_open_tag = On" >> /etc/php7/php.ini
+
+# permissions
+chown -R abc:abc \
+	/config \
+	/app/peqphpeditor
